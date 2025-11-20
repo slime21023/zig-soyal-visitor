@@ -302,13 +302,6 @@ Command 2000 是一個底層協議傳輸指令，支援所有 SOYAL 協議功能
 - [SOYAL 官方網站](https://www.soyal.com/article.php?act=view&id=84)
 - [701ServerSQL JSON Command 1V05](https://files.soyal.com.tw/EN/download/Cross-System%20Integration/701Server%20Json%20Command%201V05.pdf)
 
-### 專案文件
-- [SPEC_COMPLIANCE_REPORT.md](SPEC_COMPLIANCE_REPORT.md) - 規格符合性報告
-- [TAGUID_CONVERSION_ANALYSIS.md](TAGUID_CONVERSION_ANALYSIS.md) - TagUID 轉換分析
-- [COMMAND_2000_ANALYSIS.md](COMMAND_2000_ANALYSIS.md) - Command 2000 詳細分析
-- [TEST_REPORT.md](TEST_REPORT.md) - 測試報告
-- [design/](design/) - 設計文檔資料夾
-
 ### 技術參考
 - [Zig 語言官方文件](https://ziglang.org/documentation/master/)
 
