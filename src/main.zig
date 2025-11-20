@@ -33,21 +33,35 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "add")) {
         handleAddCommand(allocator, &client, config, args) catch |err| {
-            if (err != error.ConnectionRefused and 
-                err != error.NetworkUnreachable and 
+            if (err != error.ConnectionRefused and
+                err != error.NetworkUnreachable and
                 err != error.ConnectionTimedOut and
-                err != error.NoResponse) {
+                err != error.NoResponse)
+            {
                 std.debug.print("\n❌ 執行失敗: {s}\n", .{@errorName(err)});
                 std.debug.print("   請檢查參數是否正確或聯繫系統管理員\n\n", .{});
             }
             std.process.exit(1);
         };
-    } else if (std.mem.eql(u8, command, "add-lift")) {
-        handleAddLiftCommand(allocator, &client, config, args) catch |err| {
-            if (err != error.ConnectionRefused and 
-                err != error.NetworkUnreachable and 
+    } else if (std.mem.eql(u8, command, "add-extended")) {
+        handleAddExtendedCommand(allocator, &client, config, args) catch |err| {
+            if (err != error.ConnectionRefused and
+                err != error.NetworkUnreachable and
                 err != error.ConnectionTimedOut and
-                err != error.NoResponse) {
+                err != error.NoResponse)
+            {
+                std.debug.print("\n❌ 執行失敗: {s}\n", .{@errorName(err)});
+                std.debug.print("   請檢查參數是否正確或聯繫系統管理員\n\n", .{});
+            }
+            std.process.exit(1);
+        };
+    } else if (std.mem.eql(u8, command, "raw")) {
+        handleRawCommand(allocator, &client, config, args) catch |err| {
+            if (err != error.ConnectionRefused and
+                err != error.NetworkUnreachable and
+                err != error.ConnectionTimedOut and
+                err != error.NoResponse)
+            {
                 std.debug.print("\n❌ 執行失敗: {s}\n", .{@errorName(err)});
                 std.debug.print("   請檢查參數是否正確或聯繫系統管理員\n\n", .{});
             }
@@ -55,10 +69,11 @@ pub fn main() !void {
         };
     } else if (std.mem.eql(u8, command, "delete")) {
         handleDeleteCommand(allocator, &client, config, args) catch |err| {
-            if (err != error.ConnectionRefused and 
-                err != error.NetworkUnreachable and 
+            if (err != error.ConnectionRefused and
+                err != error.NetworkUnreachable and
                 err != error.ConnectionTimedOut and
-                err != error.NoResponse) {
+                err != error.NoResponse)
+            {
                 std.debug.print("\n❌ 執行失敗: {s}\n", .{@errorName(err)});
                 std.debug.print("   請檢查參數是否正確或聯繫系統管理員\n\n", .{});
             }
@@ -119,75 +134,107 @@ fn handleDeleteCommand(
     config: types.Config,
     args: [][:0]u8,
 ) !void {
-    if (args.len < 3) {
-        std.debug.print("\n❌ 參數不足\n", .{});
-        std.debug.print("用法: soyal-visitor delete <卡片ID> [區域] [節點]\n", .{});
-        std.debug.print("\n範例:\n", .{});
-        std.debug.print("  soyal-visitor delete QR123456\n", .{});
-        std.debug.print("  soyal-visitor delete QR789012 0 1\n\n", .{});
-        return error.InvalidArguments;
+    if (args.len < 2) {
+        std.debug.print("\n❌ 錯誤: delete 指令需要參數\n", .{});
+        std.debug.print("   用法: soyal-visitor delete [區域] [節點]\n\n", .{});
+        return error.MissingArguments;
     }
 
-    const card_id = args[2];
-    const area: u8 = if (args.len > 3) std.fmt.parseInt(u8, args[3], 10) catch {
+    const area: u8 = if (args.len > 2) std.fmt.parseInt(u8, args[2], 10) catch {
         std.debug.print("\n❌ 錯誤: 區域編號必須是 0-255 之間的數字\n", .{});
-        std.debug.print("   您輸入的值: {s}\n\n", .{args[3]});
+        std.debug.print("   您輸入的值: {s}\n\n", .{args[2]});
         return error.InvalidArea;
     } else 0;
-    const node: u8 = if (args.len > 4) std.fmt.parseInt(u8, args[4], 10) catch {
+    const node: u8 = if (args.len > 3) std.fmt.parseInt(u8, args[3], 10) catch {
         std.debug.print("\n❌ 錯誤: 節點編號必須是 0-255 之間的數字\n", .{});
-        std.debug.print("   您輸入的值: {s}\n\n", .{args[4]});
+        std.debug.print("   您輸入的值: {s}\n\n", .{args[3]});
         return error.InvalidNode;
     } else 1;
 
-    try commands.deleteVisitor(allocator, client, config, card_id, area, node);
+    try commands.deleteVisitor(allocator, client, config, area, node);
 }
 
-fn handleAddLiftCommand(
+fn handleAddExtendedCommand(
     allocator: std.mem.Allocator,
     client: *Client,
     config: types.Config,
     args: [][:0]u8,
 ) !void {
-    if (args.len < 6) {
-        std.debug.print("\n❌ 參數不足\n", .{});
-        std.debug.print("用法: soyal-visitor add-lift <卡片ID> <開始時間> <結束時間> <電梯樓層> [區域] [節點]\n", .{});
-        std.debug.print("電梯樓層格式: \"1,2,3,5\" (用逗號分隔樓層號碼)\n", .{});
-        std.debug.print("\n範例:\n", .{});
-        std.debug.print("  soyal-visitor add-lift VISITOR001 \"2024-11-19 09:00:00\" \"2024-11-19 17:00:00\" \"1,2,5,10\"\n", .{});
-        std.debug.print("  soyal-visitor add-lift QR789012 \"2024-11-19 09:00:00\" \"2024-11-19 17:00:00\" \"B1,1,2,3\" 0 1\n\n", .{});
-        return error.InvalidArguments;
+    if (args.len < 5) {
+        std.debug.print("\n❌ 錯誤: add-extended 指令需要至少 3 個參數\n", .{});
+        std.debug.print("   用法: soyal-visitor add-extended <卡片ID> <開始時間> <結束時間> [密碼] [區域] [節點]\n", .{});
+        std.debug.print("   範例: soyal-visitor add-extended \"04295:14226\" \"2024-11-19 09:00\" \"2024-11-19 17:00\" 1212\n\n", .{});
+        return error.MissingArguments;
     }
 
     const card_id = args[2];
     const start_time = args[3];
     const end_time = args[4];
-    const lift_floors = args[5];
+
+    const password: ?u32 = if (args.len > 5)
+        std.fmt.parseInt(u32, args[5], 10) catch null
+    else
+        null;
+
     const area: u8 = if (args.len > 6) std.fmt.parseInt(u8, args[6], 10) catch {
         std.debug.print("\n❌ 錯誤: 區域編號必須是 0-255 之間的數字\n", .{});
         std.debug.print("   您輸入的值: {s}\n\n", .{args[6]});
         return error.InvalidArea;
     } else 0;
+
     const node: u8 = if (args.len > 7) std.fmt.parseInt(u8, args[7], 10) catch {
         std.debug.print("\n❌ 錯誤: 節點編號必須是 0-255 之間的數字\n", .{});
         std.debug.print("   您輸入的值: {s}\n\n", .{args[7]});
         return error.InvalidNode;
     } else 1;
 
-    const visitor = types.VisitorWithLift{
+    const visitor = types.VisitorExtended{
         .card_id = card_id,
         .start_time = start_time,
         .end_time = end_time,
         .area = area,
         .node = node,
-        .lift_floors = lift_floors,
+        .password = password,
     };
 
-    try commands.addVisitorWithLift(allocator, client, config, visitor);
+    try commands.addVisitorExtended(allocator, client, config, visitor, 0);
+}
+
+fn handleRawCommand(
+    allocator: std.mem.Allocator,
+    client: *Client,
+    config: types.Config,
+    args: [][:0]u8,
+) !void {
+    if (args.len < 3) {
+        std.debug.print("\n❌ 錯誤: raw 指令需要 HEX payload 參數\n", .{});
+        std.debug.print("   用法: soyal-visitor raw <HEX_PAYLOAD> [區域] [節點]\n", .{});
+        std.debug.print("   範例: soyal-visitor raw \"0x2184\" 0 1\n\n", .{});
+        return error.MissingArguments;
+    }
+
+    const hex_payload = args[2];
+
+    const area: u8 = if (args.len > 3) std.fmt.parseInt(u8, args[3], 10) catch {
+        std.debug.print("\n❌ 錯誤: 區域編號必須是 0-255 之間的數字\n", .{});
+        std.debug.print("   您輸入的值: {s}\n\n", .{args[3]});
+        return error.InvalidArea;
+    } else 0;
+
+    const node: u8 = if (args.len > 4) std.fmt.parseInt(u8, args[4], 10) catch {
+        std.debug.print("\n❌ 錯誤: 節點編號必須是 0-255 之間的數字\n", .{});
+        std.debug.print("   您輸入的值: {s}\n\n", .{args[4]});
+        return error.InvalidNode;
+    } else 1;
+
+    try commands.sendRawProtocol(allocator, client, config, area, node, hex_payload);
 }
 
 fn printUsage() !void {
-    const stdout = std.io.getStdOut().writer();
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    defer stdout.flush() catch {};
     try stdout.writeAll(
         \\
         \\🔧 SOYAL 訪客管理 CLI 工具
@@ -198,55 +245,65 @@ fn printUsage() !void {
         \\
         \\指令:
         \\  add <卡片ID> <開始時間> <結束時間> [區域] [節點]
-        \\      新增訪客權限
+        \\      新增訪客權限（使用 Command 1021）
         \\      
         \\      範例:
-        \\        soyal-visitor add QR123456 "2024-11-19 09:00:00" "2024-11-19 17:00:00"
-        \\        soyal-visitor add QR789012 "2024-11-19 09:00:00" "2024-11-19 17:00:00" 0 1
+        \\        soyal-visitor add "04295:14226" "2024-11-19 09:00" "2024-11-19 17:00"
+        \\        soyal-visitor add "59488:61427" "2024-11-19 09:00" "2024-11-19 17:00" 0 1
         \\
-        \\  add-lift <卡片ID> <開始時間> <結束時間> <電梯樓層> [區域] [節點]
-        \\      新增訪客權限（含電梯樓層控制，使用 command 2000）
-        \\      電梯樓層格式: "1,2,3,5" (用逗號分隔樓層號碼)
+        \\  add-extended <卡片ID> <開始時間> <結束時間> [密碼] [區域] [節點]
+        \\      新增訪客權限（使用 Command 2000，支援密碼等高級功能）
         \\      
         \\      範例:
-        \\        soyal-visitor add-lift VISITOR001 "2024-11-19 09:00:00" "2024-11-19 17:00:00" "1,2,5,10"
-        \\        soyal-visitor add-lift QR789012 "2024-11-19 09:00:00" "2024-11-19 17:00:00" "B1,1,2,3" 0 1
+        \\        soyal-visitor add-extended "04295:14226" "2024-11-19 09:00" "2024-11-19 17:00" 1212
+        \\        soyal-visitor add-extended "59488:61427" "2024-11-19 09:00" "2024-11-19 17:00"
         \\
-        \\  delete <卡片ID> [區域] [節點]
-        \\      刪除訪客權限
+        \\  delete [區域] [節點]
+        \\      刪除訪客權限（使用 Command 1022）
         \\      
         \\      範例:
-        \\        soyal-visitor delete QR123456
-        \\        soyal-visitor delete QR789012 0 1
+        \\        soyal-visitor delete
+        \\        soyal-visitor delete 0 1
+        \\
+        \\  raw <HEX_PAYLOAD> [區域] [節點]
+        \\      發送原始 HEX 協議指令（Command 2000）
+        \\      
+        \\      範例:
+        \\        soyal-visitor raw "0x2184" 0 1
+        \\        soyal-visitor raw "0x8B570000C8..." 0 1
         \\
         \\  help
         \\      顯示此說明訊息
         \\
         \\參數說明:
-        \\  卡片ID      訪客的 QR Code 或卡片識別碼
-        \\  開始時間    權限開始時間 (格式: YYYY-MM-DD HH:MM:SS)
-        \\  結束時間    權限結束時間 (格式: YYYY-MM-DD HH:MM:SS)
-        \\  電梯樓層    可進入的電梯樓層 (格式: "1,2,3,5" 或 "B1,1,2,3")
-        \\  區域        控制器區域編號 (預設: 0)
-        \\  節點        控制器節點編號 (預設: 1)
+        \\  卡片ID         卡號 (格式: 數字:數字，如 "04295:14226")
+        \\  開始時間       權限開始時間 (格式: YYYY-MM-DD HH:MM)
+        \\  結束時間       權限結束時間 (格式: YYYY-MM-DD HH:MM)
+        \\  密碼           訪客密碼 (可選，數字)
+        \\  HEX_PAYLOAD    原始 HEX 協議字串 (必須以 "0x" 開頭)
+        \\  區域           控制器區域編號 (預設: 0)
+        \\  節點           控制器節點編號 (預設: 1)
         \\
         \\環境變數:
         \\  SOYAL_HOST      701ServerSQL 主機位址 (預設: 127.0.0.1)
         \\  SOYAL_PORT      701ServerSQL 連接埠 (預設: 7010)
-        \\  SOYAL_USER      登入使用者名稱 (預設: admin)
+        \\  SOYAL_USER      登入使用者名稱 (預設: z visitor)
         \\
         \\範例:
-        \\  # 新增訪客，有效期限一天
-        \\  soyal-visitor add VISITOR001 "2024-11-19 08:00:00" "2024-11-19 18:00:00"
+        \\  # 新增訪客（Command 1021）
+        \\  soyal-visitor add "04295:14226" "2024-11-19 08:00" "2024-11-19 18:00"
         \\
-        \\  # 新增訪客並指定可進入電梯樓層（使用 command 2000）
-        \\  soyal-visitor add-lift VISITOR002 "2024-11-19 08:00:00" "2024-11-19 18:00:00" "1,2,5,10"
+        \\  # 新增訪客並設定密碼（Command 2000）
+        \\  soyal-visitor add-extended "04295:14226" "2024-11-19 08:00" "2024-11-19 18:00" 1212
+        \\
+        \\  # 發送原始 HEX 協議（控制門鎖）
+        \\  soyal-visitor raw "0x2184" 0 1
         \\
         \\  # 刪除訪客權限
-        \\  soyal-visitor delete VISITOR001
+        \\  soyal-visitor delete
         \\
         \\  # 指定伺服器位址
-        \\  SOYAL_HOST=192.168.1.100 SOYAL_PORT=7010 soyal-visitor add QR001 "..." "..."
+        \\  SOYAL_HOST=192.168.1.100 SOYAL_PORT=7010 soyal-visitor add "12345:67890" "..." "..."
         \\
         \\━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         \\

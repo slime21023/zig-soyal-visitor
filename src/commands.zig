@@ -1,6 +1,8 @@
 const std = @import("std");
 const types = @import("types.zig");
 const Client = @import("client.zig").Client;
+const validators = @import("validators.zig");
+const converters = @import("converters.zig");
 
 /// 新增訪客
 pub fn addVisitor(
@@ -9,20 +11,44 @@ pub fn addVisitor(
     config: types.Config,
     visitor: types.Visitor,
 ) !void {
+    // 驗證輸入參數
+    validators.CardIdValidator.validate(visitor.card_id) catch |err| {
+        std.debug.print("\n❌ {s}\n", .{validators.CardIdValidator.formatError(err)});
+        std.debug.print("   您輸入的卡號: {s}\n", .{visitor.card_id});
+        std.debug.print("   範例格式: 59488:61427\n\n", .{});
+        return err;
+    };
+
+    validators.TimeValidator.validateTimeRange(visitor.start_time, visitor.end_time) catch |err| {
+        std.debug.print("\n❌ {s}\n", .{validators.TimeValidator.formatError(err)});
+        std.debug.print("   開始時間: {s}\n", .{visitor.start_time});
+        std.debug.print("   結束時間: {s}\n\n", .{visitor.end_time});
+        return err;
+    };
+
+    try validators.AreaNodeValidator.validateArea(visitor.area);
+    try validators.AreaNodeValidator.validateNode(visitor.node);
+
+    // 轉換卡號為 HEX TagUID（符合 SOYAL 規格）
+    const hex_tag_uid = try converters.cardIdToHexTagUID(visitor.card_id, allocator);
+    defer allocator.free(hex_tag_uid);
+
     std.debug.print("\n📝 新增訪客...\n", .{});
     std.debug.print("   卡片 ID: {s}\n", .{visitor.card_id});
+    std.debug.print("   TagUID (HEX): {s}\n", .{hex_tag_uid});
     std.debug.print("   開始時間: {s}\n", .{visitor.start_time});
     std.debug.print("   結束時間: {s}\n", .{visitor.end_time});
     std.debug.print("   區域/節點: {d}/{d}\n\n", .{ visitor.area, visitor.node });
 
-    // 建立指令結構
+    // 建立指令結構（符合官方規格）
     const cmd_item = types.AddVisitorCommand.CommandItem{
         .c_cmd = 1021,
         .Area = visitor.area,
         .Node = visitor.node,
-        .CardID = visitor.card_id,
-        .StartTime = visitor.start_time,
-        .EndTime = visitor.end_time,
+        .Addr = 0, // 位址預設為 0
+        .TagUID = hex_tag_uid, // 使用轉換後的 HEX 格式
+        .Begin_dt = visitor.start_time,
+        .End_dt = visitor.end_time,
     };
 
     var cmd_array = [_]types.AddVisitorCommand.CommandItem{cmd_item};
@@ -33,13 +59,15 @@ pub fn addVisitor(
     };
 
     // 序列化為 JSON
-    var json_buffer = std.ArrayList(u8).init(allocator);
-    defer json_buffer.deinit();
+    var json_out: std.io.Writer.Allocating = .init(allocator);
+    defer json_out.deinit();
+    try std.json.Stringify.value(command, .{}, &json_out.writer);
+    const json_buffer = json_out.written();
 
-    try std.json.stringify(command, .{}, json_buffer.writer());
+    std.debug.print("🔍 JSON 輸出:\n{s}\n\n", .{json_buffer});
 
     // 發送指令
-    const response = try client.sendCommand(json_buffer.items);
+    const response = try client.sendCommand(json_buffer);
     defer allocator.free(response);
 
     // 解析回應
@@ -51,20 +79,24 @@ pub fn deleteVisitor(
     allocator: std.mem.Allocator,
     client: *Client,
     config: types.Config,
-    card_id: []const u8,
     area: u8,
     node: u8,
 ) !void {
+    // 驗證輸入參數
+    try validators.AreaNodeValidator.validateArea(area);
+    try validators.AreaNodeValidator.validateNode(node);
+
     std.debug.print("\n🗑️  刪除訪客...\n", .{});
-    std.debug.print("   卡片 ID: {s}\n", .{card_id});
+    std.debug.print("   位址: 0 (固定)\n", .{});
     std.debug.print("   區域/節點: {d}/{d}\n\n", .{ area, node });
 
-    // 建立指令結構
+    // 建立指令結構（符合官方規格）
+    // 注意：1022 命令不需要 TagUID，只需要 Addr
     const cmd_item = types.DeleteVisitorCommand.CommandItem{
         .c_cmd = 1022,
         .Area = area,
         .Node = node,
-        .CardID = card_id,
+        .Addr = 0, // 位址預設為 0
     };
 
     var cmd_array = [_]types.DeleteVisitorCommand.CommandItem{cmd_item};
@@ -75,69 +107,128 @@ pub fn deleteVisitor(
     };
 
     // 序列化為 JSON
-    var json_buffer = std.ArrayList(u8).init(allocator);
-    defer json_buffer.deinit();
+    var json_out: std.io.Writer.Allocating = .init(allocator);
+    defer json_out.deinit();
+    try std.json.Stringify.value(command, .{}, &json_out.writer);
+    const json_buffer = json_out.written();
 
-    try std.json.stringify(command, .{}, json_buffer.writer());
+    std.debug.print("🔍 JSON 輸出:\n{s}\n\n", .{json_buffer});
 
     // 發送指令
-    const response = try client.sendCommand(json_buffer.items);
+    const response = try client.sendCommand(json_buffer);
     defer allocator.free(response);
 
     // 解析回應
     try handleResponse(allocator, response);
 }
 
-/// 使用 command 2000 新增訪客（支援電梯樓層）
-pub fn addVisitorWithLift(
+/// 發送原始協議指令（Command 2000）
+pub fn sendRawProtocol(
     allocator: std.mem.Allocator,
     client: *Client,
     config: types.Config,
-    visitor: types.VisitorWithLift,
+    area: u8,
+    node: u8,
+    hex_payload: []const u8,
 ) !void {
-    std.debug.print("\n📝 新增訪客（含電梯樓層）...\n", .{});
-    std.debug.print("   卡片 ID: {s}\n", .{visitor.card_id});
-    std.debug.print("   開始時間: {s}\n", .{visitor.start_time});
-    std.debug.print("   結束時間: {s}\n", .{visitor.end_time});
-    std.debug.print("   區域/節點: {d}/{d}\n", .{ visitor.area, visitor.node });
-    if (visitor.lift_floors) |floors| {
-        std.debug.print("   電梯樓層: {s}\n\n", .{floors});
-    } else {
-        std.debug.print("   電梯樓層: (未設定)\n\n", .{});
+    // 驗證 HEX 格式
+    if (!std.mem.startsWith(u8, hex_payload, "0x")) {
+        std.debug.print("\n❌ 錯誤: HEX 字串必須以 '0x' 開頭\n", .{});
+        std.debug.print("   您輸入的值: {s}\n", .{hex_payload});
+        std.debug.print("   正確格式: 0x8B570000C8...\n\n", .{});
+        return error.InvalidHexFormat;
     }
 
-    // 建立 command 2000 通用指令結構
-    const cmd_item = types.UniversalCommand.CommandItem{
+    try validators.AreaNodeValidator.validateArea(area);
+    try validators.AreaNodeValidator.validateNode(node);
+
+    std.debug.print("\n📡 發送原始協議指令...\n", .{});
+    std.debug.print("   區域: {d}\n", .{area});
+    std.debug.print("   節點: {d}\n", .{node});
+    std.debug.print("   HEX Payload: {s}\n\n", .{hex_payload});
+
+    // 建立指令
+    const cmd_item = types.RawProtocolCommand.CommandItem{
         .c_cmd = 2000,
-        .Area = visitor.area,
-        .Node = visitor.node,
-        .CardID = visitor.card_id,
-        .StartTime = visitor.start_time,
-        .EndTime = visitor.end_time,
-        .LiftData = visitor.lift_floors,
+        .Area = area,
+        .Node = node,
+        .Hex = hex_payload,
     };
 
-    var cmd_array = [_]types.UniversalCommand.CommandItem{cmd_item};
+    var cmd_array = [_]types.RawProtocolCommand.CommandItem{cmd_item};
 
-    const command = types.UniversalCommand{
+    const command = types.RawProtocolCommand{
         .l_user = config.username,
         .cmd_array = &cmd_array,
     };
 
     // 序列化為 JSON
-    var json_buffer = std.ArrayList(u8).init(allocator);
-    defer json_buffer.deinit();
+    var json_out: std.io.Writer.Allocating = .init(allocator);
+    defer json_out.deinit();
+    try std.json.Stringify.value(command, .{}, &json_out.writer);
+    const json_buffer = json_out.written();
 
-    try std.json.stringify(command, .{}, json_buffer.writer());
-
-    std.debug.print("🔍 發送指令: {s}\n\n", .{json_buffer.items});
+    std.debug.print("🔍 JSON 輸出:\n{s}\n\n", .{json_buffer});
 
     // 發送指令
-    const response = try client.sendCommand(json_buffer.items);
+    const response = try client.sendCommand(json_buffer);
     defer allocator.free(response);
 
     // 解析回應
     try handleResponse(allocator, response);
+}
+
+/// 新增訪客（使用 Command 2000，支援密碼等高級功能）
+pub fn addVisitorExtended(
+    allocator: std.mem.Allocator,
+    client: *Client,
+    config: types.Config,
+    visitor: types.VisitorExtended,
+    addr: u32,
+) !void {
+    // 驗證輸入參數
+    validators.CardIdValidator.validate(visitor.card_id) catch |err| {
+        std.debug.print("\n❌ {s}\n", .{validators.CardIdValidator.formatError(err)});
+        std.debug.print("   您輸入的卡號: {s}\n", .{visitor.card_id});
+        std.debug.print("   範例格式: 59488:61427\n\n", .{});
+        return err;
+    };
+
+    validators.TimeValidator.validateTimeRange(visitor.start_time, visitor.end_time) catch |err| {
+        std.debug.print("\n❌ {s}\n", .{validators.TimeValidator.formatError(err)});
+        std.debug.print("   開始時間: {s}\n", .{visitor.start_time});
+        std.debug.print("   結束時間: {s}\n\n", .{visitor.end_time});
+        return err;
+    };
+
+    try validators.AreaNodeValidator.validateArea(visitor.area);
+    try validators.AreaNodeValidator.validateNode(visitor.node);
+
+    // 構建 HEX payload
+    const hex_payload = try converters.buildVisitor8BHPayload(allocator, visitor, addr);
+    defer allocator.free(hex_payload);
+
+    std.debug.print("\n📝 新增訪客（擴展功能 - Command 2000）...\n", .{});
+    std.debug.print("   卡片 ID: {s}\n", .{visitor.card_id});
+    std.debug.print("   位址: {d}\n", .{addr});
+    std.debug.print("   開始時間: {s}\n", .{visitor.start_time});
+    std.debug.print("   結束時間: {s}\n", .{visitor.end_time});
+    if (visitor.password) |pwd| {
+        std.debug.print("   密碼: {d}\n", .{pwd});
+    }
+    if (visitor.access_mode) |mode| {
+        std.debug.print("   通行模式: 0x{X:0>2}\n", .{mode});
+    }
+    if (visitor.door_access) |access| {
+        std.debug.print("   門禁權限: {s}\n", .{access});
+    }
+    if (visitor.lift_floors) |floors| {
+        std.debug.print("   電梯樓層: {s}\n", .{floors});
+    }
+    std.debug.print("   HEX Payload: {s}\n\n", .{hex_payload});
+
+    // 發送原始協議
+    try sendRawProtocol(allocator, client, config, visitor.area, visitor.node, hex_payload);
 }
 
 /// 處理伺服器回應
@@ -196,7 +287,7 @@ fn handleResponse(allocator: std.mem.Allocator, response_data: []const u8) !void
         }
 
         std.debug.print("   區域/節點: {d}/{d}\n", .{ item.Area, item.Node });
-        
+
         if (item.Hex) |hex_data| {
             std.debug.print("   額外資訊: {s}\n", .{hex_data});
         }
